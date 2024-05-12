@@ -39,7 +39,9 @@ func (cli *TsClient) Start(ctx context.Context) {
 		fmt.Println("Client started request consumer")
 		for {
 			var req tsRequest
+
 			err := cli.Ws.ReadJSON(&req)
+
 			if err != nil {
 				fmt.Println(err.Error())
 				return
@@ -73,6 +75,9 @@ func (cli *TsClient) Start(ctx context.Context) {
 				return
 			case res := <-cli.responses:
 				cli.Ws.WriteJSON(res)
+
+				// perf testing
+				reqCount++
 			}
 		}
 	}(ctx)
