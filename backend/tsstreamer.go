@@ -2,32 +2,39 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 )
 
-type QueryOptions struct {
-	Database   string
-	Collection string
-	Query      map[string]interface{}
+type TsSelectOptions struct {
+	Database     string `json:"database"`
+	Collection   string `json:"collection"`
+	StartIsoDate string `json:"startIsoDate"`
+	EndIsoDate   string `json:"endIsoDate"`
+}
+
+type SelectOptions struct {
+	Database   string      `json:"database"`
+	Collection string      `json:"collection"`
+	Filter     interface{} `json:"filter"`
 }
 
 // Interface that should be supported by the client
 type TsStreamer interface {
 	Start(ctx context.Context) error
 	GetCollections(ctx context.Context) error
-	Select(ctx context.Context, opts *QueryOptions) error
+	SelectTs(ctx context.Context, opts *TsSelectOptions) error
 }
 
 // Public
 
 func (cli *TsClient) Start(ctx context.Context) {
 	// Create and start the consumer
-	go cli.handleRequests()
-
-	// Start the query function
-	go cli.handleQueries(ctx)
+	go cli.handleRequests(ctx)
 
 	// Start the producer
 	go cli.handleResponses(ctx)
@@ -44,10 +51,11 @@ func (cli *TsClient) GetCollections(ctx context.Context) {
 		}
 	}
 
-	cli.responses <- StreamerResponse{MsgType: 1, Data: &collections}
+	// TODO decode out the response
+	cli.responses <- StreamerResponse{MsgType: 1, Data: collections}
 }
 
-func (cli *TsClient) Select(ctx context.Context, req interface{}) {
+func (cli *TsClient) SelectTs(ctx context.Context, options *TsSelectOptions) {
 	// Handle issues with parsing JSON
 	defer func() {
 		if r := recover(); r != nil {
@@ -55,19 +63,25 @@ func (cli *TsClient) Select(ctx context.Context, req interface{}) {
 		}
 	}()
 
-	// Get the query information from the request
-	opts := req.(map[string]interface{})
-	qOpts := QueryOptions{
-		Database:   opts["database"].(string),
-		Collection: opts["collection"].(string),
-		Query:      opts["query"].(map[string]interface{}),
-	}
-
 	// Create a channel to move the query results into
 	resultChan := make(chan interface{})
 
-	// TODO: Figure out how to pass query parameters to bson
-	cur, err := cli.Db.Database(qOpts.Database).Collection(qOpts.Collection).Find(ctx, qOpts.Query)
+	start, startErr := time.Parse(time.RFC3339, options.StartIsoDate)
+	end, EndErr := time.Parse(time.RFC3339, options.EndIsoDate)
+	if startErr != nil || EndErr != nil {
+		fmt.Println("Date parse error!")
+		return
+	}
+
+	// Create the time query
+	query := bson.M{
+		TS_FIELD: bson.M{
+			"$gte": start,
+			"$lte": end,
+		},
+	}
+	cur, err := cli.Db.Database(options.Database).Collection(options.Collection).Find(ctx, query)
+
 	if err != nil {
 		fmt.Println(err.Error())
 		panic("Error occured querying the database")
@@ -100,6 +114,7 @@ func (cli *TsClient) Select(ctx context.Context, req interface{}) {
 				return
 			}
 		case result := <-resultChan:
+			// TODO: Put the responses out
 			cli.responses <- StreamerResponse{MsgType: 2, Data: result}
 		}
 	}
@@ -107,36 +122,36 @@ func (cli *TsClient) Select(ctx context.Context, req interface{}) {
 
 // Private
 
-func (cli *TsClient) handleRequests() {
+func (cli *TsClient) handleRequests(ctx context.Context) {
 	fmt.Println("Client started request consumer")
 	for {
-		var req StreamerRequest
-		err := cli.Ws.ReadJSON(&req)
+		// Read the first byte to determine how the message should be parsed
+		messageType, msg, err := cli.Ws.ReadMessage()
+
+		// Handle bad message error
+		if messageType == -1 {
+			return
+		}
 		if err != nil {
-			fmt.Println(err.Error())
+			fmt.Printf("Error reading message type: %s\n", err.Error())
 			return
 		}
 
-		cli.requests <- req
-	}
-}
+		// Decode the first byte as the message type
+		clientMsgType := int(binary.BigEndian.Uint32(msg))
 
-func (cli *TsClient) handleQueries(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case req := <-cli.requests:
-			switch req.MsgType {
-			case GET_COLLECTIONS:
-				go cli.GetCollections(ctx)
-			case SELECT:
-				go cli.Select(ctx, req.Data)
-			case STOP:
-				cli.signals <- TsSignal{Code: STOP}
-			default:
-				fmt.Printf("No handler for request type %d\n", req.MsgType)
-			}
+		switch clientMsgType {
+		case GET_COLLECTIONS:
+			go cli.GetCollections(ctx)
+		case SELECT:
+			var opts TsSelectOptions
+			json.Unmarshal(msg[4:], &opts)
+			go cli.SelectTs(ctx, &opts)
+		case STOP:
+			// Signal for the producer to halt messages
+			cli.signals <- TsSignal{Code: STOP}
+		default:
+			fmt.Printf("No handler for request type %d\n", clientMsgType)
 		}
 	}
 }

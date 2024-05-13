@@ -15,4 +15,5 @@ const (
 	GET_COLLECTIONS = 1
 	SELECT          = 2
 	STOP            = 3
+	GET_START_TIME  = 4
 )

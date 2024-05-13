@@ -12,7 +12,7 @@ type TsSignal struct {
 type TsClient struct {
 	Db        *mongo.Client
 	Ws        *websocket.Conn
-	requests  chan StreamerRequest
+	requests  chan []byte
 	responses chan StreamerResponse
 	signals   chan TsSignal
 }
@@ -21,7 +21,7 @@ func CreateTsClient(ws *websocket.Conn, db *mongo.Client) TsClient {
 	return TsClient{
 		Db:        db,
 		Ws:        ws,
-		requests:  make(chan StreamerRequest),
+		requests:  make(chan []byte),
 		responses: make(chan StreamerResponse),
 		signals:   make(chan TsSignal),
 	}
