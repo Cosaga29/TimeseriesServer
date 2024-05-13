@@ -28,6 +28,7 @@ type TsStreamer interface {
 	Start(ctx context.Context) error
 	GetCollections(ctx context.Context) error
 	SelectTs(ctx context.Context, opts *TsSelectOptions) error
+	Select(ctx context.Context, opts *SelectOptions) error
 }
 
 // Public
@@ -55,11 +56,11 @@ func (cli *TsClient) GetCollections(ctx context.Context) {
 	cli.responses <- StreamerResponse{MsgType: 1, Data: collections}
 }
 
-func (cli *TsClient) SelectTs(ctx context.Context, options *TsSelectOptions) {
+func (cli *TsClient) SelectTs(ctx context.Context, options *TsSelectOptions) error {
 	// Handle issues with parsing JSON
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Println("Invalid format for select")
+			fmt.Println("SelectTs Panic")
 		}
 	}()
 
@@ -67,10 +68,13 @@ func (cli *TsClient) SelectTs(ctx context.Context, options *TsSelectOptions) {
 	resultChan := make(chan interface{})
 
 	start, startErr := time.Parse(time.RFC3339, options.StartIsoDate)
-	end, EndErr := time.Parse(time.RFC3339, options.EndIsoDate)
-	if startErr != nil || EndErr != nil {
-		fmt.Println("Date parse error!")
-		return
+	if startErr != nil {
+		return startErr
+	}
+
+	end, endErr := time.Parse(time.RFC3339, options.EndIsoDate)
+	if endErr != nil {
+		return endErr
 	}
 
 	// Create the time query
@@ -80,11 +84,10 @@ func (cli *TsClient) SelectTs(ctx context.Context, options *TsSelectOptions) {
 			"$lte": end,
 		},
 	}
-	cur, err := cli.Db.Database(options.Database).Collection(options.Collection).Find(ctx, query)
 
+	cur, err := cli.Db.Database(options.Database).Collection(options.Collection).Find(ctx, query)
 	if err != nil {
-		fmt.Println(err.Error())
-		panic("Error occured querying the database")
+		return err
 	}
 
 	// Create a routine to decode the query results and serve them to the
@@ -108,13 +111,12 @@ func (cli *TsClient) SelectTs(ctx context.Context, options *TsSelectOptions) {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case signal := <-cli.signals:
 			if signal.Code == STOP {
-				return
+				return nil
 			}
 		case result := <-resultChan:
-			// TODO: Put the responses out
 			cli.responses <- StreamerResponse{MsgType: 2, Data: result}
 		}
 	}

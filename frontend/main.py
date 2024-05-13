@@ -9,6 +9,7 @@ ws = create_connection("ws://localhost:9000/wsclient")
 req = 2
 
 # Request collections
+# First byte = message type, rest = JSON request
 payload = req.to_bytes(length=4, byteorder="big", signed=False) + bytes(
     json.dumps({
         "database": "test_db_q",
