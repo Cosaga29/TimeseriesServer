@@ -8,20 +8,8 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 )
-
-type TsSelectOptions struct {
-	Database     string `json:"database"`
-	Collection   string `json:"collection"`
-	StartIsoDate string `json:"startIsoDate"`
-	EndIsoDate   string `json:"endIsoDate"`
-}
-
-type SelectOptions struct {
-	Database   string      `json:"database"`
-	Collection string      `json:"collection"`
-	Filter     interface{} `json:"filter"`
-}
 
 // Interface that should be supported by the client
 type TsStreamer interface {
@@ -92,21 +80,10 @@ func (cli *TsClient) SelectTs(ctx context.Context, options *TsSelectOptions) err
 
 	// Create a routine to decode the query results and serve them to the
 	// results channel
-	go func() {
-		var results []bson.M
-		err := cur.All(ctx, &results)
-
-		if err == nil {
-			for i := range results {
-				resultChan <- results[i]
-			}
-		}
-
-		cli.signals <- TsSignal{Code: STOP}
-	}()
+	go cli.channelResults(ctx, cur, resultChan)
 
 	// Continue serving results until the stop signal is given. Note that
-	// this allows the query stream to be interupted at any time by the
+	// this allows the query stream to be interrupted at any time by the
 	// client
 	for {
 		select {
@@ -123,6 +100,24 @@ func (cli *TsClient) SelectTs(ctx context.Context, options *TsSelectOptions) err
 }
 
 // Private
+
+func (cli *TsClient) channelResults(ctx context.Context, cur *mongo.Cursor, resultChan chan interface{}) error {
+	var results []bson.M
+
+	err := cur.All(ctx, &results)
+	if err != nil {
+		cli.signals <- TsSignal{Code: STOP}
+		return err
+	}
+
+	for i := range results {
+		resultChan <- results[i]
+	}
+
+	cli.signals <- TsSignal{Code: STOP}
+
+	return nil
+}
 
 func (cli *TsClient) handleRequests(ctx context.Context) {
 	fmt.Println("Client started request consumer")

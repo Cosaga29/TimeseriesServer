@@ -10,6 +10,22 @@ type StreamerResponse struct {
 	Data    interface{} `json:"data"`
 }
 
+type TsSelectOptions struct {
+	Database     string `json:"database"`
+	Collection   string `json:"collection"`
+	StartIsoDate string `json:"startIsoDate"`
+	EndIsoDate   string `json:"endIsoDate"`
+}
+
+type SelectOptions struct {
+	Database   string      `json:"database"`
+	Collection string      `json:"collection"`
+	Filter     interface{} `json:"filter"`
+}
+
+type Filter struct {
+}
+
 // Message Types
 const (
 	GET_COLLECTIONS = 1
