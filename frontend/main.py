@@ -1,6 +1,4 @@
-import time
 import json
-from datetime import datetime, timezone
 
 from websocket import create_connection
 
