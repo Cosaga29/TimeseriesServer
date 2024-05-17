@@ -2,11 +2,8 @@ package client
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"time"
-	"tsserver/m/v2/messages"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -14,20 +11,11 @@ import (
 
 // Interface that should be supported by the client
 type Selector interface {
-	Start(ctx context.Context) error
 	GetCollections(ctx context.Context) error
-	Select(ctx context.Context, opts *messages.SelectOptions) error
+	Select(ctx context.Context, opts *SelectOptions) error
 }
 
 // Public
-
-func (cli *TsClient) Start(ctx context.Context) {
-	// Create and start the consumer
-	go cli.handleRequests(ctx)
-
-	// Start the producer
-	go cli.handleResponses(ctx)
-}
 
 func (cli *TsClient) GetCollections(ctx context.Context) {
 	var collections = make([]string, 0)
@@ -40,10 +28,10 @@ func (cli *TsClient) GetCollections(ctx context.Context) {
 		}
 	}
 
-	cli.responses <- messages.StreamerResponse{MsgType: 1, Data: collections}
+	cli.responses <- StreamerResponse{MsgType: 1, Data: collections}
 }
 
-func (cli *TsClient) Select(ctx context.Context, options *messages.SelectOptions) error {
+func (cli *TsClient) Select(ctx context.Context, options *SelectOptions) error {
 	// Handle issues with parsing JSON
 	defer func() {
 		if r := recover(); r != nil {
@@ -89,11 +77,11 @@ func (cli *TsClient) Select(ctx context.Context, options *messages.SelectOptions
 		case <-ctx.Done():
 			return nil
 		case signal := <-cli.signals:
-			if signal.Code == messages.STOP {
+			if signal.Code == STOP {
 				return nil
 			}
 		case result := <-resultChan:
-			cli.responses <- messages.StreamerResponse{MsgType: messages.SELECT, Data: result}
+			cli.responses <- StreamerResponse{MsgType: SELECT, Data: result}
 		}
 	}
 }
@@ -105,7 +93,7 @@ func (cli *TsClient) channelResults(ctx context.Context, cur *mongo.Cursor, resu
 
 	err := cur.All(ctx, &results)
 	if err != nil {
-		cli.signals <- TsSignal{Code: messages.STOP}
+		cli.signals <- TsSignal{Code: STOP}
 		return err
 	}
 
@@ -113,52 +101,7 @@ func (cli *TsClient) channelResults(ctx context.Context, cur *mongo.Cursor, resu
 		resultChan <- results[i]
 	}
 
-	cli.signals <- TsSignal{Code: messages.STOP}
+	cli.signals <- TsSignal{Code: STOP}
 
 	return nil
-}
-
-func (cli *TsClient) handleRequests(ctx context.Context) {
-	fmt.Println("Client started request consumer")
-	for {
-		// Read the first byte to determine how the message should be parsed
-		messageType, msg, err := cli.Ws.ReadMessage()
-
-		// Handle bad message error
-		if messageType == -1 {
-			return
-		}
-		if err != nil {
-			fmt.Printf("Error reading message type: %s\n", err.Error())
-			return
-		}
-
-		// Decode the first byte as the message type
-		clientMsgType := int(binary.BigEndian.Uint32(msg))
-
-		switch clientMsgType {
-		case messages.GET_COLLECTIONS:
-			go cli.GetCollections(ctx)
-		case messages.SELECT:
-			var opts messages.SelectOptions
-			json.Unmarshal(msg[4:], &opts)
-			go cli.Select(ctx, &opts)
-		case messages.STOP:
-			// Signal for the producer to halt messages
-			cli.signals <- TsSignal{Code: messages.STOP}
-		default:
-			fmt.Printf("No handler for request type %d\n", clientMsgType)
-		}
-	}
-}
-
-func (cli *TsClient) handleResponses(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case res := <-cli.responses:
-			cli.Ws.WriteJSON(res)
-		}
-	}
 }

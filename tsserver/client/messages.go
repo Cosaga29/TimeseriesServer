@@ -1,4 +1,4 @@
-package messages
+package client
 
 // Message Types
 const (
