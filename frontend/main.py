@@ -28,5 +28,3 @@ print(json.loads(ws.recv()))
 
 ws.close()
 exit() 
-
-ws.close()

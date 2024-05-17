@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"tsserver/m/v2/client"
 
 	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
@@ -59,7 +60,7 @@ func handleNewTsClient(ctx context.Context, db *mongo.Client) {
 		case <-ctx.Done():
 			return
 		case newClient := <-newClientChannel:
-			client := CreateTsClient(newClient, db)
+			client := client.CreateTsClient(newClient, db)
 			client.Start(ctx)
 		}
 	}

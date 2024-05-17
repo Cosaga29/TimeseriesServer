@@ -1,4 +1,4 @@
-package main
+package client
 
 import (
 	"context"
@@ -6,17 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+	"tsserver/m/v2/messages"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // Interface that should be supported by the client
-type TsStreamer interface {
+type Selector interface {
 	Start(ctx context.Context) error
 	GetCollections(ctx context.Context) error
-	SelectTs(ctx context.Context, opts *TsSelectOptions) error
-	Select(ctx context.Context, opts *SelectOptions) error
+	Select(ctx context.Context, opts *messages.SelectOptions) error
 }
 
 // Public
@@ -40,11 +40,10 @@ func (cli *TsClient) GetCollections(ctx context.Context) {
 		}
 	}
 
-	// TODO decode out the response
-	cli.responses <- StreamerResponse{MsgType: 1, Data: collections}
+	cli.responses <- messages.StreamerResponse{MsgType: 1, Data: collections}
 }
 
-func (cli *TsClient) SelectTs(ctx context.Context, options *TsSelectOptions) error {
+func (cli *TsClient) Select(ctx context.Context, options *messages.SelectOptions) error {
 	// Handle issues with parsing JSON
 	defer func() {
 		if r := recover(); r != nil {
@@ -90,11 +89,11 @@ func (cli *TsClient) SelectTs(ctx context.Context, options *TsSelectOptions) err
 		case <-ctx.Done():
 			return nil
 		case signal := <-cli.signals:
-			if signal.Code == STOP {
+			if signal.Code == messages.STOP {
 				return nil
 			}
 		case result := <-resultChan:
-			cli.responses <- StreamerResponse{MsgType: 2, Data: result}
+			cli.responses <- messages.StreamerResponse{MsgType: messages.SELECT, Data: result}
 		}
 	}
 }
@@ -106,7 +105,7 @@ func (cli *TsClient) channelResults(ctx context.Context, cur *mongo.Cursor, resu
 
 	err := cur.All(ctx, &results)
 	if err != nil {
-		cli.signals <- TsSignal{Code: STOP}
+		cli.signals <- TsSignal{Code: messages.STOP}
 		return err
 	}
 
@@ -114,7 +113,7 @@ func (cli *TsClient) channelResults(ctx context.Context, cur *mongo.Cursor, resu
 		resultChan <- results[i]
 	}
 
-	cli.signals <- TsSignal{Code: STOP}
+	cli.signals <- TsSignal{Code: messages.STOP}
 
 	return nil
 }
@@ -138,15 +137,15 @@ func (cli *TsClient) handleRequests(ctx context.Context) {
 		clientMsgType := int(binary.BigEndian.Uint32(msg))
 
 		switch clientMsgType {
-		case GET_COLLECTIONS:
+		case messages.GET_COLLECTIONS:
 			go cli.GetCollections(ctx)
-		case SELECT:
-			var opts TsSelectOptions
+		case messages.SELECT:
+			var opts messages.SelectOptions
 			json.Unmarshal(msg[4:], &opts)
-			go cli.SelectTs(ctx, &opts)
-		case STOP:
+			go cli.Select(ctx, &opts)
+		case messages.STOP:
 			// Signal for the producer to halt messages
-			cli.signals <- TsSignal{Code: STOP}
+			cli.signals <- TsSignal{Code: messages.STOP}
 		default:
 			fmt.Printf("No handler for request type %d\n", clientMsgType)
 		}
